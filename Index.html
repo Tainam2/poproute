@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POPSYS Multi-Route Generator</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f8f9fa; }
+        h1, h2 { text-align: center; color: #343a40; }
+        textarea, #addressList { width: 100%; height: 200px; margin-bottom: 15px; padding: 10px; border: 1px solid #ced4da; border-radius: 5px; font-size: 16px; }
+        button, input[type="file"] { display: block; width: 100%; padding: 12px; font-size: 16px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; margin-bottom: 10px; }
+        button:hover, input[type="file"]:hover { background-color: #0056b3; }
+        .output { margin-top: 20px; padding: 15px; background: white; border: 1px solid #ced4da; border-radius: 5px; }
+        .output a { color: #007bff; text-decoration: none; }
+        .output a:hover { text-decoration: underline; }
+        #addressList { display: none; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.min.js"></script>
+</head>
+<body>
+    <h1>POPSYS Multi-Route Generator</h1>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv,.pdf">
+    <textarea id="inputText" placeholder="Enter a list of addresses, one per line..."></textarea>
+    <div id="addressList" contenteditable="true"></div>
+    <button id="editButton" style="display: none;">Edit Addresses</button>
+    <button id="generateButton">Generate Google Maps Routes</button>
+    <div class="output" id="output"></div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const inputText = document.getElementById('inputText');
+        const addressList = document.getElementById('addressList');
+        const editButton = document.getElementById('editButton');
+        const generateButton = document.getElementById('generateButton');
+        const output = document.getElementById('output');
+
+        fileInput.addEventListener('change', handleFileUpload);
+        editButton.addEventListener('click', toggleEditMode);
+        generateButton.addEventListener('click', generateRoutes);
+
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            let addresses = [];
+
+            if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                addresses = await handleExcel(file);
+            } else if (file.name.endsWith('.csv')) {
+                addresses = await handleCSV(file);
+            } else if (file.name.endsWith('.pdf')) {
+                addresses = await handlePDF(file);
+            }
+
+            displayAddresses(addresses);
+        }
+
+        async function handleExcel(file) {
+            const data = await file.arrayBuffer();
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+            return jsonData.map(row => row[1]).filter(Boolean);
+        }
+
+        async function handleCSV(file) {
+            const text = await file.text();
+            const rows = text.split('\n').map(row => row.split(','));
+            return rows.map(row => row[1]).filter(Boolean);
+        }
+
+        async function handlePDF(file) {
+            const data = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data }).promise;
+            let addresses = [];
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+                const pageAddresses = pageText.match(/\b[A-Za-z0-9\s,]+(?:Street|St|Avenue|Ave|Road|Rd|Highway|Hwy|Lane|Ln|Drive|Dr|Circle|Cir|Trail|Trl|Parkway|Pkwy|Court|Ct)\b/g) || [];
+                addresses = addresses.concat(pageAddresses);
+            }
+            return addresses;
+        }
+
+        function displayAddresses(addresses) {
+            addressList.innerHTML = addresses.map(addr => `<div>${addr}</div>`).join('');
+            addressList.style.display = 'block';
+            inputText.style.display = 'none';
+            editButton.style.display = 'block';
+        }
+
+        function toggleEditMode() {
+            if (addressList.contentEditable === 'true') {
+                addressList.contentEditable = 'false';
+                editButton.textContent = 'Edit Addresses';
+            } else {
+                addressList.contentEditable = 'true';
+                editButton.textContent = 'Finish Editing';
+            }
+        }
+
+        function generateRoutes() {
+            let addresses;
+            if (addressList.style.display === 'block') {
+                addresses = Array.from(addressList.children).map(div => div.textContent.trim());
+            } else {
+                addresses = inputText.value.split('\n').map(addr => addr.trim()).filter(Boolean);
+            }
+
+            output.innerHTML = '';
+
+            if (addresses.length > 0) {
+                const routeGroups = [];
+                for (let i = 0; i < addresses.length; i += 10) {
+                    routeGroups.push(addresses.slice(i, i + 10));
+                }
+
+                routeGroups.forEach((group, index) => {
+                    const googleMapsLink = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(group[0])}&waypoints=${group.slice(1).map(addr => encodeURIComponent(addr)).join('|')}`;
+                    
+                    const linkElement = document.createElement('p');
+                    linkElement.innerHTML = `<a href="${googleMapsLink}" target="_blank">Open Google Maps Route ${index + 1} (${group.length} addresses)</a>`;
+                    output.appendChild(linkElement);
+                });
+            } else {
+                output.innerHTML = '<p>No addresses provided.</p>';
+            }
+        }
+    </script>
+</body>
+</html>
